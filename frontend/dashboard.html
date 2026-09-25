@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>URL Shortener - Dashboard</title>
+
+    <link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+    <div class="dashboard">
+
+        <!-- HEADER -->
+        <header class="dashboard-header">
+
+            <div>
+
+                <h1>URL Shortener</h1>
+
+                <p class="subtitle">
+                    Manage your shortened URLs
+                </p>
+
+            </div>
+
+            <button
+                id="logoutButton"
+                class="logout-btn"
+            >
+                Logout
+            </button>
+
+        </header>
+
+
+        <main>
+
+            <!-- CREATE URL -->
+            <section class="card">
+
+                <h2>Create Short URL</h2>
+
+                <p class="section-description">
+                    Convert a long URL into a short link.
+                </p>
+
+                <form id="shortenForm">
+
+                    <!-- ORIGINAL URL -->
+                    <div class="form-group">
+
+                        <label for="url">
+                            Original URL
+                        </label>
+
+                        <input
+                            type="url"
+                            id="url"
+                            placeholder="https://example.com"
+                            required
+                        >
+
+                    </div>
+
+
+                    <!-- CUSTOM ALIAS -->
+                    <div class="form-group">
+
+                        <label for="customAlias">
+
+                            Custom Alias
+
+                            <span class="optional">
+                                (optional)
+                            </span>
+
+                        </label>
+
+                        <input
+                            type="text"
+                            id="customAlias"
+                            placeholder="my-link"
+                            maxlength="50"
+                        >
+
+                        <small>
+                            Use letters, numbers, hyphens and underscores.
+                        </small>
+
+                    </div>
+
+
+                    <!-- EXPIRATION -->
+                    <div class="form-group">
+
+                        <label for="expiresAt">
+
+                            Expiration
+
+                            <span class="optional">
+                                (optional)
+                            </span>
+
+                        </label>
+
+                        <input
+                            type="datetime-local"
+                            id="expiresAt"
+                        >
+
+                    </div>
+
+
+                    <button
+                        type="submit"
+                        class="primary-btn"
+                        id="shortenButton"
+                    >
+                        Create Short URL
+                    </button>
+
+                </form>
+
+
+                <p
+                    id="shortenMessage"
+                    class="message"
+                ></p>
+
+
+                <!-- RESULT -->
+                <div
+                    id="shortUrlResult"
+                    class="result-box hidden"
+                >
+
+                    <h3>
+                        Your Short URL
+                    </h3>
+
+                    <div class="short-url-row">
+
+                        <a
+                            id="shortUrlLink"
+                            href="#"
+                            target="_blank"
+                        >
+                        </a>
+
+                        <button
+                            type="button"
+                            id="copyButton"
+                            class="secondary-btn"
+                        >
+                            Copy
+                        </button>
+
+                    </div>
+
+                    <p
+                        id="copyMessage"
+                        class="success-text"
+                    ></p>
+
+                </div>
+
+            </section>
+
+
+            <!-- MY URLS -->
+            <section class="card">
+
+                <div class="section-header">
+
+                    <div>
+
+                        <h2>My URLs</h2>
+
+                        <p class="section-description">
+                            Your shortened links and statistics.
+                        </p>
+
+                    </div>
+
+                    <button
+                        id="refreshButton"
+                        class="secondary-btn"
+                    >
+                        Refresh
+                    </button>
+
+                </div>
+
+
+                <div id="urlsContainer">
+
+                    <div class="loading">
+                        Loading your URLs...
+                    </div>
+
+                </div>
+
+            </section>
+
+        </main>
+
+    </div>
+
+
+    <script src="script.js"></script>
+
+</body>
+</html>
