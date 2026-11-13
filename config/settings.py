@@ -13,6 +13,10 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+from redis.backoff import NoBackoff
+from redis.retry import Retry
+
 from dotenv import load_dotenv
 
 
@@ -28,9 +32,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY
 # ============================================================
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY"
-)
+SECRET_KEY = os.getenv("SECRET_KEY")
+
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        "SECRET_KEY is not set. Copy .env.example to .env and set it."
+    )
 
 
 DEBUG = os.getenv(
@@ -140,7 +147,13 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
 
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.getenv("SQLITE_PATH") or BASE_DIR / "db.sqlite3",
+
+        # The web container and the worker container both write to this
+        # file, so wait for locks instead of failing immediately.
+        "OPTIONS": {
+            "timeout": 20,
+        },
     }
 }
 
@@ -195,18 +208,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-
-# ============================================================
-# EMAIL
-# ============================================================
-
-MAILERS = {
-    "default": {
-        "BACKEND":
-            "django.core.mail.backends.console.EmailBackend",
-    },
-}
-
+# The plain HTML/CSS/JS frontend lives in ./frontend and is served by
+# Django at /app/ (see config/urls.py).
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 # ============================================================
 # REDIS
@@ -239,9 +243,31 @@ CACHES = {
         "OPTIONS": {
             "CLIENT_CLASS":
                 "django_redis.client.DefaultClient",
+
+            # Fail fast if Redis is down instead of hanging a request.
+            # Retries are off: redis-py's default (3 retries with backoff)
+            # made every cache call take ~3 seconds during an outage.
+            "SOCKET_CONNECT_TIMEOUT": 1,
+            "SOCKET_TIMEOUT": 1,
+            "CONNECTION_POOL_KWARGS": {
+                "retry": Retry(NoBackoff(), 0),
+            },
+
+            # If Redis is unreachable, cache calls return None instead of
+            # raising. A failed cache.get() is then just a "cache miss", so
+            # the app falls back to the database.
+            "IGNORE_EXCEPTIONS": True,
         },
     }
 }
+
+# django-redis would log a full traceback for every ignored error, which
+# floods the logs during an outage. An outage is reported instead by the
+# warning in services.record_click() and by GET /api/health/.
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = False
+
+# How long (seconds) a short code -> URL mapping stays in Redis
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))
 
 
 # ============================================================
@@ -267,3 +293,42 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# ============================================================
+# SECURITY HARDENING
+# ============================================================
+
+SECURE_BROWSER_XSS_FILTER = True
+
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+X_FRAME_OPTIONS = "DENY"
+
+CSRF_COOKIE_HTTPONLY = True
+
+SESSION_COOKIE_HTTPONLY = True
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}

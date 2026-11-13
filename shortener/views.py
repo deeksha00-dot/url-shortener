@@ -1,29 +1,134 @@
+import logging
+import re
+
+from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import User
 from django.core.cache import cache
-from django.http import HttpResponseGone
+from django.http import Http404, HttpResponseGone
 from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
+from django.views.decorators.http import require_safe
 
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import (
     api_view,
+    authentication_classes,
     permission_classes,
 )
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .models import URL
-from .queue import enqueue_click
+from .queue import queue_client
 from .rate_limit import (
     get_client_ip,
     is_rate_limited,
 )
-from .serializers import URLCreateSerializer
-from .services import create_short_url
+from .serializers import RegisterSerializer, URLCreateSerializer
+from .services import create_short_url, record_click
+
+
+logger = logging.getLogger(__name__)
+
+# Valid short codes: letters, digits, "-" and "_" (max 50, same as the model).
+# Anything else cannot exist, so answer 404 without touching Redis or the DB.
+CODE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,50}")
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def health(request):
+    """Report whether the app can reach its database and Redis.
+
+    Redis being down is "degraded", not "down": the app still works
+    because it falls back to the database.
+    """
+    try:
+        URL.objects.exists()
+        database_ok = True
+    except Exception:
+        database_ok = False
+
+    try:
+        queue_client.ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+
+    if not database_ok:
+        overall = "down"
+    elif not redis_ok:
+        overall = "degraded"
+    else:
+        overall = "ok"
+
+    return Response(
+        {
+            "status": overall,
+            "database": "up" if database_ok else "down",
+            "redis": "up" if redis_ok else "down",
+        },
+        status=(
+            status.HTTP_200_OK
+            if database_ok
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    )
 
 
 @api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def register_view(request):
+    if is_rate_limited(
+        "register",
+        get_client_ip(request),
+        limit=5,
+        window_seconds=60
+    ):
+        return Response(
+            {
+                "error": (
+                    "Too many sign-up attempts. "
+                    "Please try again later."
+                )
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+
+    serializer = RegisterSerializer(
+        data=request.data
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    user = User.objects.create_user(
+        username=serializer.validated_data["username"],
+        password=serializer.validated_data["password"]
+    )
+
+    token, _ = Token.objects.get_or_create(
+        user=user
+    )
+
+    return Response(
+        {
+            "token": token.key
+        },
+        status=status.HTTP_201_CREATED
+    )
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def login_view(request):
     client_ip = get_client_ip(request)
 
@@ -112,8 +217,16 @@ def shorten_url(request):
             status=status.HTTP_409_CONFLICT
         )
 
+    except RuntimeError as e:
+        return Response(
+            {
+                "error": str(e)
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
     short_url = request.build_absolute_uri(
-        f"/{url.code}/"
+        f"/{url.code}"
     )
 
     return Response(
@@ -124,16 +237,22 @@ def shorten_url(request):
     )
 
 
+@require_safe
 def redirect_url(request, code):
+    if not CODE_PATTERN.fullmatch(code):
+        raise Http404("Invalid short code.")
+
     cache_key = f"url:{code}"
 
-    # 1. Check Redis first
+    # 1. Check Redis first. If Redis is down, cache.get() returns None
+    #    (see IGNORE_EXCEPTIONS in settings), so we simply use the database.
     cached_data = cache.get(cache_key)
+    cache_status = "HIT"
 
     if cached_data is None:
-        print(f"CACHE MISS: {code}")
+        cache_status = "MISS"
 
-        # 2. Cache miss -> query SQLite
+        # 2. Cache miss -> query the database (404 if it does not exist)
         url = get_object_or_404(
             URL,
             code=code
@@ -148,7 +267,17 @@ def redirect_url(request, code):
                 "This short URL has expired."
             )
 
-        # 4. Data stored in Redis
+        # 4. Store the mapping in Redis. Never keep it longer than the
+        #    URL's own expiry time.
+        ttl = settings.CACHE_TTL_SECONDS
+
+        if url.expires_at:
+            seconds_left = int(
+                (url.expires_at - timezone.now()).total_seconds()
+            )
+
+            ttl = max(1, min(ttl, seconds_left))
+
         cached_data = {
             "url_id": url.id,
             "original_url": url.original_url,
@@ -158,18 +287,17 @@ def redirect_url(request, code):
         cache.set(
             cache_key,
             cached_data,
-            timeout=300
+            timeout=ttl
         )
 
-    else:
-        print(f"CACHE HIT: {code}")
+    logger.info("CACHE %s: %s", cache_status, code)
 
     # 5. Extract cached values
     original_url = cached_data["original_url"]
     expires_at = cached_data["expires_at"]
     url_id = cached_data["url_id"]
 
-    # 6. Check expiration even on Redis HIT
+    # 6. Check expiration even on a cache HIT
     if (
         expires_at
         and expires_at <= timezone.now()
@@ -180,11 +308,17 @@ def redirect_url(request, code):
             "This short URL has expired."
         )
 
-    # 7. Send analytics event to Redis Stream
-    enqueue_click(url_id)
+    # 7. Count the click (Redis Stream, or database if Redis is down).
+    #    HEAD requests (link previews, curl -I) are not counted.
+    if request.method == "GET":
+        record_click(url_id)
 
     # 8. Redirect immediately
-    return redirect(original_url)
+    response = redirect(original_url)
+
+    response["X-Cache"] = cache_status
+
+    return response
 
 
 @api_view(["GET"])

@@ -1,5 +1,6 @@
 import os
 import socket
+import time
 
 import django
 import redis
@@ -23,6 +24,8 @@ from shortener.queue import (
 )
 
 
+# The worker has its own client (no short socket timeout) because
+# xreadgroup(block=5000) intentionally waits several seconds for new events.
 redis_client = redis.Redis(
     host=os.getenv(
         "REDIS_HOST",
@@ -196,15 +199,8 @@ def recover_stale_messages():
         )
 
 
-ensure_consumer_group()
-
-print("Click analytics worker started...")
-print(f"Stream: {CLICK_STREAM}")
-print(f"Group: {CONSUMER_GROUP}")
-print(f"Consumer: {CONSUMER_NAME}")
-
-
-while True:
+def run_once():
+    """One iteration of the worker loop (separate so it can be tested)."""
 
     # Recover messages abandoned by failed workers
     recover_stale_messages()
@@ -219,10 +215,7 @@ while True:
         block=5000
     )
 
-    if not messages:
-        continue
-
-    for stream_name, entries in messages:
+    for stream_name, entries in messages or []:
 
         for message_id, data in entries:
 
@@ -230,3 +223,35 @@ while True:
                 message_id,
                 data
             )
+
+
+def main():
+    ensure_consumer_group()
+
+    print("Click analytics worker started...")
+    print(f"Stream: {CLICK_STREAM}")
+    print(f"Group: {CONSUMER_GROUP}")
+    print(f"Consumer: {CONSUMER_NAME}")
+
+    while True:
+        try:
+            run_once()
+
+        except redis.exceptions.ConnectionError as error:
+            # Redis restarted or is temporarily unreachable.
+            # Wait and try again instead of crashing.
+            print(f"Redis unavailable ({error}). Retrying in 2 seconds...")
+            time.sleep(2)
+
+        except redis.exceptions.ResponseError as error:
+            # Redis came back without its data (the stream / consumer group
+            # no longer exists). Create the group again and carry on.
+            if "NOGROUP" not in str(error):
+                raise
+
+            print("Consumer group is missing; recreating it.")
+            ensure_consumer_group()
+
+
+if __name__ == "__main__":
+    main()

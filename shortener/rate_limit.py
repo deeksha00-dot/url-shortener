@@ -29,6 +29,12 @@ def is_rate_limited(
         timeout=window_seconds
     )
 
+    # cache.add() returns None (not True/False) when Redis is unreachable.
+    # Without Redis we cannot count requests, so allow them (fail open)
+    # instead of blocking every user.
+    if created is None:
+        return False
+
     if created:
         return False
 
@@ -41,5 +47,8 @@ def is_rate_limited(
             count,
             timeout=window_seconds
         )
+
+    if count is None:
+        return False
 
     return count > limit

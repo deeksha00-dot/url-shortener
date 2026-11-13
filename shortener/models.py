@@ -8,7 +8,9 @@ class URL(models.Model):
         unique=True
     )
 
-    original_url = models.URLField()
+    original_url = models.URLField(
+        max_length=2048
+    )
 
     owner = models.ForeignKey(
         User,

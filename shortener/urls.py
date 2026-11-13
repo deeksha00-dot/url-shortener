@@ -2,14 +2,28 @@ from django.urls import path
 
 from .views import (
     delete_url,
+    health,
     login_view,
     my_urls,
+    register_view,
     shorten_url,
     url_stats,
 )
 
 
 urlpatterns = [
+    path(
+        "health/",
+        health,
+        name="health"
+    ),
+
+    path(
+        "register/",
+        register_view,
+        name="register"
+    ),
+
     path(
         "login/",
         login_view,

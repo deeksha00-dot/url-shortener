@@ -520,6 +520,43 @@ button {
 }
 
 
+.url-actions {
+    display: flex;
+
+    gap: 8px;
+}
+
+
+.summary {
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, 1fr);
+
+    gap: 12px;
+
+    margin-bottom: 18px;
+}
+
+
+.toggle-line {
+    margin-top: 18px;
+
+    text-align: center;
+
+    font-size: 14px;
+
+    color: #777;
+}
+
+
+.toggle-line a {
+    color: #222;
+
+    font-weight: 600;
+}
+
+
 /* =========================
    STATES
 ========================= */
@@ -596,6 +633,16 @@ button {
 
     .url-card-top {
         flex-direction: column;
+    }
+
+
+    .url-actions {
+        width: 100%;
+    }
+
+
+    .url-actions button {
+        flex: 1;
     }
 
 

@@ -1,4 +1,10 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+// The frontend is served by Django (http://localhost:8000/app/), so API calls
+// go to the same origin. If you open the files with VS Code Live Server
+// (port 5500) instead, they are sent to the Django server on port 8000.
+const API_BASE_URL =
+    ["5500", "5501"].includes(window.location.port)
+        ? "http://127.0.0.1:8000"
+        : window.location.origin;
 
 
 /* =========================
@@ -33,15 +39,113 @@ function formatDate(dateString) {
 }
 
 
+function extractError(data, fallback) {
+
+    if (!data || typeof data !== "object") {
+        return fallback;
+    }
+
+    if (data.error) {
+        return data.error;
+    }
+
+    for (const value of Object.values(data)) {
+
+        if (Array.isArray(value) && value.length > 0) {
+            return value.join(" ");
+        }
+
+        if (typeof value === "string") {
+            return value;
+        }
+    }
+
+    return fallback;
+}
+
+
+async function copyToClipboard(text) {
+
+    // navigator.clipboard only exists on https:// or localhost
+    if (navigator.clipboard && window.isSecureContext) {
+
+        await navigator.clipboard.writeText(text);
+
+        return;
+    }
+
+    const textarea = document.createElement("textarea");
+
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    const copied = document.execCommand("copy");
+
+    document.body.removeChild(textarea);
+
+    if (!copied) {
+        throw new Error("Copy failed");
+    }
+}
+
+
 /* =========================
-   LOGIN
+   LOGIN / SIGN UP
 ========================= */
 
 const loginForm =
     document.getElementById("loginForm");
 
 
+let isRegisterMode = false;
+
 if (loginForm) {
+
+    const toggleLink =
+        document.getElementById("toggleMode");
+
+    const toggleText =
+        document.getElementById("toggleText");
+
+    const heading =
+        document.getElementById("authHeading");
+
+    const loginButtonEl =
+        document.getElementById("loginButton");
+
+    const passwordInput =
+        document.getElementById("password");
+
+    toggleLink.addEventListener("click", function (event) {
+
+        event.preventDefault();
+
+        isRegisterMode = !isRegisterMode;
+
+        heading.textContent =
+            isRegisterMode ? "Create your account" : "Welcome back";
+
+        loginButtonEl.textContent =
+            isRegisterMode ? "Sign up" : "Login";
+
+        toggleText.textContent =
+            isRegisterMode
+                ? "Already have an account?"
+                : "New here?";
+
+        toggleLink.textContent =
+            isRegisterMode ? "Log in" : "Create an account";
+
+        passwordInput.autocomplete =
+            isRegisterMode ? "new-password" : "current-password";
+
+        document.getElementById("loginMessage").textContent = "";
+    });
+
 
     // If already logged in, go directly to dashboard
     if (getToken()) {
@@ -90,14 +194,14 @@ if (loginForm) {
             loginButton.disabled = true;
 
             loginButton.textContent =
-                "Logging in...";
+                isRegisterMode ? "Creating account..." : "Logging in...";
 
 
             try {
 
                 const response =
                     await fetch(
-                        `${API_BASE_URL}/api/login/`,
+                        `${API_BASE_URL}${isRegisterMode ? "/api/register/" : "/api/login/"}`,
                         {
                             method: "POST",
 
@@ -121,8 +225,12 @@ if (loginForm) {
                 if (!response.ok) {
 
                     message.textContent =
-                        data.error ||
-                        "Invalid username or password.";
+                        extractError(
+                            data,
+                            isRegisterMode
+                                ? "Unable to create account."
+                                : "Invalid username or password."
+                        );
 
                     message.className =
                         "message error-text";
@@ -167,7 +275,7 @@ if (loginForm) {
                 loginButton.disabled = false;
 
                 loginButton.textContent =
-                    "Login";
+                    isRegisterMode ? "Sign up" : "Login";
             }
 
         }
@@ -387,36 +495,11 @@ if (shortenForm) {
 
                 if (!response.ok) {
 
-                    let errorMessage =
-                        "Unable to create short URL.";
-
-
-                    if (data.error) {
-
-                        errorMessage =
-                            data.error;
-
-                    }
-                    else if (data.url) {
-
-                        errorMessage =
-                            Array.isArray(data.url)
-                                ? data.url.join(", ")
-                                : data.url;
-
-                    }
-                    else if (data.custom_alias) {
-
-                        errorMessage =
-                            Array.isArray(
-                                data.custom_alias
-                            )
-                                ? data.custom_alias.join(
-                                    ", "
-                                )
-                                : data.custom_alias;
-
-                    }
+                    const errorMessage =
+                        extractError(
+                            data,
+                            "Unable to create short URL."
+                        );
 
 
                     message.textContent =
@@ -522,7 +605,7 @@ if (copyButton) {
 
             try {
 
-                await navigator.clipboard.writeText(
+                await copyToClipboard(
                     shortUrl
                 );
 
@@ -667,6 +750,47 @@ async function loadMyUrls() {
         container.innerHTML = "";
 
 
+        // Summary: total links and total clicks
+        const totalClicks =
+            urls.reduce(
+                function (sum, item) {
+                    return sum + item.click_count;
+                },
+                0
+            );
+
+
+        const summary =
+            document.createElement(
+                "div"
+            );
+
+
+        summary.className =
+            "summary";
+
+
+        summary.appendChild(
+            createStat(
+                "Total links",
+                urls.length
+            )
+        );
+
+
+        summary.appendChild(
+            createStat(
+                "Total clicks",
+                totalClicks
+            )
+        );
+
+
+        container.appendChild(
+            summary
+        );
+
+
         urls.forEach(
             function (url) {
 
@@ -722,7 +846,7 @@ async function loadMyUrls() {
 
 
                 shortLink.href =
-                    `${API_BASE_URL}/${encodeURIComponent(url.code)}/`;
+                    `${API_BASE_URL}/${encodeURIComponent(url.code)}`;
 
 
                 shortLink.target =
@@ -769,13 +893,81 @@ async function loadMyUrls() {
                 );
 
 
+                const copyUrlButton =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                copyUrlButton.className =
+                    "secondary-btn";
+
+
+                copyUrlButton.textContent =
+                    "Copy";
+
+
+                copyUrlButton.addEventListener(
+                    "click",
+                    async function () {
+
+                        try {
+
+                            await copyToClipboard(
+                                shortLink.href
+                            );
+
+                            copyUrlButton.textContent =
+                                "Copied!";
+
+                        }
+                        catch (error) {
+
+                            copyUrlButton.textContent =
+                                "Failed";
+                        }
+
+                        setTimeout(
+                            function () {
+
+                                copyUrlButton.textContent =
+                                    "Copy";
+
+                            },
+                            1500
+                        );
+
+                    }
+                );
+
+
+                const actions =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                actions.className =
+                    "url-actions";
+
+
+                actions.appendChild(
+                    copyUrlButton
+                );
+
+
+                actions.appendChild(
+                    deleteButton
+                );
+
+
                 top.appendChild(
                     codeSection
                 );
 
 
                 top.appendChild(
-                    deleteButton
+                    actions
                 );
 
 

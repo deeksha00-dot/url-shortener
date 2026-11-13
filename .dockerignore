@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+.vscode/
+db.sqlite3
+
+# Secrets are passed at runtime with env_file, never baked into the image
+.env

@@ -1,15 +1,19 @@
+import secrets
+
+# Base62 alphabet: digits + uppercase + lowercase
 CHARACTERS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+# 62^7 is about 3.5 trillion possible codes
+CODE_LENGTH = 7
 
-def encode_base62(number):
-    if number == 0:
-        return CHARACTERS[0]
 
-    result = ""
+def generate_short_code(length=CODE_LENGTH):
+    """Return a random Base62 string using a cryptographically secure RNG.
 
-    while number > 0:
-        remainder = number % 62
-        result = CHARACTERS[remainder] + result
-        number = number // 62
-
-    return result
+    Random codes (unlike codes derived from the database ID) cannot be
+    guessed or enumerated by counting upwards.
+    """
+    return "".join(
+        secrets.choice(CHARACTERS)
+        for _ in range(length)
+    )

@@ -1,0 +1,79 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: urlshortener-redis
+    # Published on 127.0.0.1 only (handy if you run Django on your own
+    # machine). Containers talk to Redis over the internal network.
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  web:
+    build: .
+    container_name: urlshortener-web
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Inside Docker, Redis is reached by its SERVICE NAME, not localhost
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SQLITE_PATH: /data/db.sqlite3
+    volumes:
+      - sqlite_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        python manage.py migrate --noinput
+        exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2
+    restart: unless-stopped
+    healthcheck:
+      # Calls GET /api/health/ (fails if the database is unreachable)
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+
+  worker:
+    build: .
+    container_name: urlshortener-worker
+    env_file:
+      - .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SQLITE_PATH: /data/db.sqlite3
+    volumes:
+      - sqlite_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    command: ["python", "worker.py"]
+    restart: unless-stopped
+
+
+volumes:
+  redis_data:
+  sqlite_data:
